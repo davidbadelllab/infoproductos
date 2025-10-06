@@ -12,7 +12,7 @@ import {
 import { dashboard } from '@/routes';
 import { type NavItem } from '@/types';
 import { Link } from '@inertiajs/react';
-import { LayoutGrid, Users, Facebook } from 'lucide-react';
+import { LayoutGrid, Users, Facebook, Copy } from 'lucide-react';
 import AppLogo from './app-logo';
 
 const mainNavItems: NavItem[] = [
@@ -36,6 +36,18 @@ const adsNavItems: NavItem[] = [
         title: 'Facebook Ads',
         href: '/facebook-ads',
         icon: Facebook,
+        items: [
+            {
+                title: 'Buscar Anuncios',
+                href: '/facebook-ads',
+                icon: Facebook,
+            },
+            {
+                title: 'Ads Clonados',
+                href: '/cloned-ads',
+                icon: Copy,
+            },
+        ],
     },
 ];
 

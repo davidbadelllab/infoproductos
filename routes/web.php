@@ -75,6 +75,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('/{id}/export', [FacebookAdsController::class, 'export'])->name('export');
         });
     });
+
+    // Rutas de Anuncios Clonados
+    Route::prefix('cloned-ads')->name('cloned-ads.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\ClonedAdsController::class, 'index'])->name('index');
+        Route::get('/{uuid}', [\App\Http\Controllers\ClonedAdsController::class, 'show'])->name('show');
+        Route::put('/{uuid}', [\App\Http\Controllers\ClonedAdsController::class, 'update'])->name('update');
+        Route::post('/{uuid}/update-image', [\App\Http\Controllers\ClonedAdsController::class, 'updateImage'])->name('update-image');
+        Route::post('/{uuid}/update-video', [\App\Http\Controllers\ClonedAdsController::class, 'updateVideo'])->name('update-video');
+        Route::post('/{uuid}/generate-video', [\App\Http\Controllers\ClonedAdsController::class, 'generateVideo'])->name('generate-video');
+        Route::delete('/{uuid}', [\App\Http\Controllers\ClonedAdsController::class, 'destroy'])->name('destroy');
+    });
 });
 
 require __DIR__.'/settings.php';

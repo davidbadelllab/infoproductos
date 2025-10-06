@@ -58,8 +58,19 @@ class ApifyService
         Log::info('🔥 Iniciando scraping con Apify Facebook Ad Library Scraper');
 
         $allResults = [];
-        $limitedKeywords = array_slice($params['keywords'], 0, 3);
-        $limitedCountries = array_slice($params['countries'], 0, 1);
+
+        // Usar selectedKeywords si existe, si no, usar keywords
+        $keywordsToSearch = !empty($params['selectedKeywords'])
+            ? $params['selectedKeywords']
+            : $params['keywords'];
+
+        $limitedKeywords = array_slice($keywordsToSearch, 0, 3);
+
+        // Buscar en TODOS los países seleccionados (máximo 3 para no saturar)
+        $limitedCountries = array_slice($params['countries'], 0, 3);
+
+        Log::info('🎯 Buscando en países: ' . implode(', ', $limitedCountries));
+        Log::info('🔑 Keywords exactas: ' . implode(', ', $limitedKeywords));
 
         foreach ($limitedCountries as $country) {
             foreach ($limitedKeywords as $keyword) {
@@ -67,25 +78,59 @@ class ApifyService
 
                 try {
                     $apifyResults = $this->runApifyActor($keyword, $country, $params);
+
+                    // Formatear resultados
                     $formattedResults = array_map(
                         fn($item) => $this->formatApifyData($item, $keyword, $country),
                         $apifyResults
                     );
 
+                    // FILTRO POST-BÚSQUEDA: Validar que los resultados sean relevantes
+                    $filteredResults = $this->filterRelevantResults(
+                        $formattedResults,
+                        $keyword,
+                        $country
+                    );
+
+                    Log::info(sprintf(
+                        '📊 De %d anuncios de Apify, %d son relevantes para "%s" en %s',
+                        count($formattedResults),
+                        count($filteredResults),
+                        $keyword,
+                        $country
+                    ));
+
                     // Contar cuántos tienen WhatsApp (para estadísticas)
                     $whatsappCount = count(array_filter(
-                        $formattedResults,
+                        $filteredResults,
                         fn($ad) => $ad['has_whatsapp'] ?? false
                     ));
 
                     Log::info(sprintf(
-                        '📊 De %d anuncios, %d contienen WhatsApp',
-                        count($formattedResults),
+                        '💬 De los %d relevantes, %d contienen WhatsApp',
+                        count($filteredResults),
                         $whatsappCount
                     ));
 
-                    // IMPORTANTE: Agregar TODOS los resultados, no solo los que tienen WhatsApp
-                    $allResults = array_merge($allResults, $formattedResults);
+                    // Contar ganadores y potenciales
+                    $winnersCount = count(array_filter(
+                        $filteredResults,
+                        fn($ad) => $ad['is_winner'] ?? false
+                    ));
+
+                    $potentialsCount = count(array_filter(
+                        $filteredResults,
+                        fn($ad) => $ad['is_potential'] ?? false
+                    ));
+
+                    Log::info(sprintf(
+                        '🏆 Clasificación: %d GANADORES, %d POTENCIALES, %d normales',
+                        $winnersCount,
+                        $potentialsCount,
+                        count($filteredResults) - $winnersCount - $potentialsCount
+                    ));
+
+                    $allResults = array_merge($allResults, $filteredResults);
 
                     if (count($allResults) >= 50) {
                         Log::info('🛑 Límite de resultados alcanzado');
@@ -100,8 +145,179 @@ class ApifyService
             }
         }
 
-        Log::info(sprintf('✅ Apify completado: %d anuncios REALES extraídos', count($allResults)));
+        Log::info(sprintf('✅ Apify completado: %d anuncios REALES y RELEVANTES extraídos', count($allResults)));
         return $allResults;
+    }
+
+    /**
+     * Filtrar resultados relevantes (post-búsqueda)
+     * Valida que el anuncio realmente sea relevante a la keyword y país buscado
+     */
+    private function filterRelevantResults(array $results, string $keyword, string $country): array
+    {
+        return array_filter($results, function($ad) use ($keyword, $country) {
+            // 1. VALIDACIÓN ESTRICTA DEL PAÍS
+            $adCountry = $ad['country_code'] ?? '';
+
+            // Log para debug: ver qué país viene en los datos
+            if ($adCountry !== $country) {
+                Log::debug("❌ Anuncio '{$ad['page_name']}' RECHAZADO: país incorrecto (tiene '{$adCountry}', esperado '{$country}')");
+                return false;
+            }
+
+            // 1.5 VALIDACIÓN DE WHATSAPP: Si tiene WhatsApp, verificar que el código de país coincida
+            $whatsappNumber = $ad['whatsapp_number'] ?? '';
+            if (!empty($whatsappNumber) && $this->isInternationalPhoneNumber($whatsappNumber)) {
+                $phoneCountry = $this->getCountryFromPhone($whatsappNumber);
+
+                // Si detectamos que el número es de otro país, rechazar
+                if ($phoneCountry && $phoneCountry !== $country) {
+                    Log::debug("❌ Anuncio '{$ad['page_name']}' RECHAZADO: WhatsApp de otro país (número de '{$phoneCountry}', esperado '{$country}')");
+                    return false;
+                }
+            }
+
+            // 2. Validar que contenga la keyword en el texto del anuncio o nombre de página
+            $searchText = $this->removeAccents(strtolower($ad['ad_text'] . ' ' . $ad['page_name']));
+
+            // Tokenizar keyword en palabras individuales
+            // "Curso de programacion" → ["curso", "programacion"]
+            $keywordWords = $this->tokenizeKeyword($keyword);
+
+            // VALIDACIÓN: Si la keyword no genera palabras significativas, rechazar
+            if (empty($keywordWords)) {
+                Log::debug("⚠️ Keyword '{$keyword}' no generó palabras significativas para buscar");
+                return false;
+            }
+
+            // Buscar cada palabra en el texto (con variaciones)
+            $matchedWords = [];
+            foreach ($keywordWords as $word) {
+                $variations = $this->getWordVariations($word);
+
+                foreach ($variations as $variation) {
+                    if (str_contains($searchText, $variation)) {
+                        $matchedWords[] = $word;
+                        break; // Ya encontramos una variación de esta palabra
+                    }
+                }
+            }
+
+            // Se requiere que al menos UNA palabra clave aparezca
+            if (empty($matchedWords)) {
+                Log::debug("❌ Anuncio '{$ad['page_name']}' RECHAZADO: no contiene ninguna palabra de '{$keyword}' (buscó: " . implode(', ', $keywordWords) . ")");
+                return false;
+            }
+
+            Log::debug("✅ Anuncio '{$ad['page_name']}' ACEPTADO: país={$adCountry}, palabras=" . implode(', ', $matchedWords));
+
+            // 3. Si pasa todas las validaciones, es relevante
+            return true;
+        });
+    }
+
+    /**
+     * Tokenizar keyword en palabras significativas
+     * "Curso de programacion" → ["curso", "programacion"]
+     * "html, go, java" → ["html", "java"] (go es muy corta)
+     */
+    private function tokenizeKeyword(string $keyword): array
+    {
+        // Palabras a ignorar (artículos, preposiciones, etc.)
+        $stopWords = ['de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'en', 'y', 'o', 'a', 'para'];
+
+        // Limpiar puntuación y separar por espacios o comas
+        $cleaned = preg_replace('/[,;:|]+/', ' ', $keyword); // Reemplazar puntuación por espacios
+        $words = preg_split('/\s+/', strtolower(trim($cleaned)));
+
+        // Filtrar palabras vacías y stop words
+        $significantWords = array_filter($words, function($word) use ($stopWords) {
+            $word = trim($this->removeAccents($word));
+            // Permitir palabras de 2+ caracteres para incluir "go", "js", etc.
+            return strlen($word) >= 2 && !in_array($word, $stopWords);
+        });
+
+        return array_values($significantWords);
+    }
+
+    /**
+     * Generar variaciones de UNA palabra individual
+     * "curso" → ["curso", "cursos"]
+     * "programacion" → ["programacion", "programaciones"]
+     */
+    private function getWordVariations(string $word): array
+    {
+        $word = $this->removeAccents(strtolower($word));
+        $variations = [$word];
+
+        // Agregar plural simple (añadir 's' o 'es')
+        if (!str_ends_with($word, 's')) {
+            $variations[] = $word . 's';
+
+            // Palabras terminadas en consonante pueden llevar 'es'
+            if (!in_array(substr($word, -1), ['a', 'e', 'i', 'o', 'u'])) {
+                $variations[] = $word . 'es';
+            }
+        }
+
+        // Agregar singular (quitar 's' o 'es' final)
+        if (str_ends_with($word, 'es') && strlen($word) > 4) {
+            $variations[] = substr($word, 0, -2);
+        } elseif (str_ends_with($word, 's') && strlen($word) > 3) {
+            $variations[] = substr($word, 0, -1);
+        }
+
+        return array_unique($variations);
+    }
+
+    /**
+     * Detectar si un número tiene formato internacional (+XX)
+     */
+    private function isInternationalPhoneNumber(string $phone): bool
+    {
+        return str_starts_with($phone, '+');
+    }
+
+    /**
+     * Obtener código de país desde número de WhatsApp
+     * Mapea los prefijos telefónicos internacionales a códigos de país ISO
+     */
+    private function getCountryFromPhone(string $phone): ?string
+    {
+        // Limpiar el número
+        $phone = trim(str_replace([' ', '-', '(', ')'], '', $phone));
+
+        // Mapa de códigos telefónicos a códigos ISO de país
+        $phoneToCountry = [
+            '+56' => 'CL',   // Chile
+            '+51' => 'PE',   // Perú
+            '+52' => 'MX',   // México
+            '+54' => 'AR',   // Argentina
+            '+57' => 'CO',   // Colombia
+            '+593' => 'EC',  // Ecuador
+            '+591' => 'BO',  // Bolivia
+            '+34' => 'ES',   // España
+            '+1' => 'US',    // USA/Canadá
+        ];
+
+        // Buscar el prefijo más largo que coincida
+        foreach ($phoneToCountry as $prefix => $countryCode) {
+            if (str_starts_with($phone, $prefix)) {
+                return $countryCode;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Remover acentos de un texto
+     */
+    private function removeAccents(string $text): string
+    {
+        $search = ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'Á', 'É', 'Í', 'Ó', 'Ú', 'Ñ'];
+        $replace = ['a', 'e', 'i', 'o', 'u', 'n', 'A', 'E', 'I', 'O', 'U', 'N'];
+        return str_replace($search, $replace, $text);
     }
 
     /**
@@ -117,10 +333,10 @@ class ApifyService
 
         $input = [
             'urls' => [['url' => $searchUrl]],
-            'count' => 10, // Reducido de 20 a 10 para más velocidad
+            'count' => $params['count'] ?? 200, // Usar parámetro del usuario, default 200 para traer más resultados
             'period' => '',
             'scrapePageAds.activeStatus' => 'all',
-            'scrapePageAds.countryCode' => 'ALL',
+            'scrapePageAds.countryCode' => $country, // IMPORTANTE: Usar país específico, no 'ALL'
         ];
 
         Log::info('📡 Llamando a Apify Actor: ' . $this->getActorId());
@@ -262,9 +478,11 @@ class ApifyService
         $adVideoUrl = $this->extractVideoUrl($snapshot);
 
         // Calcular días de ejecución
-        $daysRunning = $this->calculateDaysRunning(
-            $apifyItem['ad_creation_time'] ?? $apifyItem['start_date'] ?? null
-        );
+        $adStartDate = $apifyItem['ad_delivery_start_time'] ??
+                       $apifyItem['ad_creation_time'] ??
+                       $apifyItem['start_date'] ?? null;
+
+        $daysRunning = $this->calculateDaysRunning($adStartDate);
 
         // Clasificar anuncio
         $hasWhatsApp = $this->checkForWhatsApp($adText) ||
@@ -274,9 +492,33 @@ class ApifyService
         $isPotential = ($daysRunning >= 7 && $daysRunning < 30 && $hasWhatsApp) ||
                       ($daysRunning >= 30);
 
+        // LOG TRANSPARENTE: Mostrar por qué es o no es ganador/potencial
+        $pageName = $apifyItem['page_name'] ?? 'Sin nombre';
+        $classification = $isWinner ? '🏆 GANADOR' : ($isPotential ? '⭐ POTENCIAL' : '📊 NORMAL');
+
+        Log::debug("📋 Clasificación '{$pageName}': {$classification} | " .
+                   "Días activo: {$daysRunning} | " .
+                   "WhatsApp: " . ($hasWhatsApp ? 'SÍ' : 'NO') . " | " .
+                   "Fecha inicio: " . ($adStartDate ?: 'NO DISPONIBLE'));
+
+        // Explicar por qué NO es ganador si no lo es
+        if (!$isWinner && !$isPotential) {
+            if ($daysRunning < 7) {
+                Log::debug("   ↳ Razón: Anuncio muy nuevo (necesita 7+ días para ser potencial)");
+            } elseif ($daysRunning < 30 && !$hasWhatsApp) {
+                Log::debug("   ↳ Razón: Necesita WhatsApp para ser potencial (tiene {$daysRunning} días)");
+            }
+        } elseif ($isPotential && !$isWinner) {
+            if ($daysRunning >= 30 && !$hasWhatsApp) {
+                Log::debug("   ↳ Potencial sin WhatsApp (para ser GANADOR necesita WhatsApp)");
+            } elseif ($daysRunning < 30) {
+                Log::debug("   ↳ Potencial joven (para ser GANADOR necesita 30+ días)");
+            }
+        }
+
         return [
             'page_name' => $apifyItem['page_name'] ?? $apifyItem['pageName'] ?? 'Página sin nombre',
-            'page_url' => $apifyItem['page_url'] ?? "https://facebook.com/{$apifyItem['page_id']}",
+            'page_url' => $apifyItem['page_url'] ?? ($apifyItem['page_id'] ?? null ? "https://facebook.com/{$apifyItem['page_id']}" : '#'),
             'ads_library_url' => $apifyItem['ad_snapshot_url'] ?? '',
             'ad_text' => $adText,
             'ad_image_url' => $adImageUrl,
@@ -375,16 +617,24 @@ class ApifyService
     /**
      * Calcular días de ejecución
      */
-    private function calculateDaysRunning(?string $dateString): int
+    private function calculateDaysRunning($dateInput): int
     {
-        if (!$dateString) {
+        if (!$dateInput) {
             return 0;
         }
 
         try {
-            $adDate = Carbon::parse($dateString);
-            return $adDate->diffInDays(now());
+            // Si es un timestamp Unix (número), convertir primero
+            if (is_numeric($dateInput)) {
+                $adDate = Carbon::createFromTimestamp($dateInput);
+            } else {
+                $adDate = Carbon::parse($dateInput);
+            }
+
+            // Calcular diferencia en días desde la fecha del anuncio hasta hoy
+            return max(0, now()->diffInDays($adDate, false));
         } catch (\Exception $e) {
+            Log::debug("⚠️ Error parseando fecha: " . $dateInput . " - " . $e->getMessage());
             return 0;
         }
     }

@@ -5,7 +5,16 @@
       "Bash(npm install:*)",
       "Bash(php artisan make:migration:*)",
       "Bash(php artisan:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(composer:*)",
+      "WebFetch(domain:replicate.com)",
+      "Bash(findstr:*)",
+      "Bash(Get-Content \"E:\\desarrolloweb\\Infoproductos\\storage\\logs\\laravel.log\" -Tail 300)",
+      "Bash(Select-String:*)",
+      "Bash(Get-Content \"E:\\desarrolloweb\\Infoproductos\\app\\Http\\Controllers\\FacebookAdsController.php\" -Tail 30)",
+      "Bash(Get-Content \"E:\\desarrolloweb\\Infoproductos\\storage\\logs\\laravel.log\" -Tail 50)",
+      "Read(//e/DesarrolloWeb/Infoproductos/storage/app/public/**)",
+      "Bash(Get-Content \"E:\\desarrolloweb\\Infoproductos\\storage\\logs\\laravel.log\" -Tail 100)"
     ],
     "deny": [],
     "ask": []

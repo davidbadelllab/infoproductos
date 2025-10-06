@@ -48,10 +48,13 @@ return [
         'api_key' => env('OPENAI_API_KEY'),
     ],
 
-    'google_cloud' => [
-        'project_id' => env('GOOGLE_CLOUD_PROJECT_ID'),
-        'location' => env('GOOGLE_CLOUD_LOCATION', 'us-central1'),
-        'credentials' => env('GOOGLE_APPLICATION_CREDENTIALS'),
+    'replicate' => [
+        'api_token' => env('REPLICATE_API_TOKEN'),
+    ],
+
+    'creatomate' => [
+        'api_key' => env('CREATOMATE_API_KEY'),
+        'template_id' => env('CREATOMATE_TEMPLATE_ID', '5bafcf82-d01b-45b9-be2d-1f86cf79befb'),
     ],
 
 ];

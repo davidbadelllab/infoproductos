@@ -5,11 +5,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AppLayout from '@/layouts/app-layout';
-import { ArrowLeft, Download, ExternalLink, Trophy, TrendingUp, MessageCircle, CopyPlus, RefreshCw, Video } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Trophy, TrendingUp, MessageCircle, CopyPlus, RefreshCw, Video, ChevronLeft, ChevronRight } from 'lucide-react';
 import facebookAds from '@/routes/facebook-ads';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ImageEditor } from '@/components/ImageEditor';
 
 interface FacebookAd {
     id: number;
@@ -39,9 +40,9 @@ interface FacebookAd {
     ad_delivery_start_time?: string;
     ad_delivery_stop_time?: string;
     total_running_time?: number;
-    ad_spend?: any;
-    impressions?: any;
-    targeting_info?: any;
+    ad_spend?: unknown;
+    impressions?: unknown;
+    targeting_info?: unknown;
     ad_type?: string;
     ad_format?: string;
     ad_status?: string;
@@ -78,9 +79,17 @@ export default function FacebookAdsShow({ search }: Props) {
     const [generated, setGenerated] = useState<string>('');
     const [generatedImage, setGeneratedImage] = useState<string>('');
     const [generatedVideo, setGeneratedVideo] = useState<string>('');
+    const [clonedAdUuid, setClonedAdUuid] = useState<string>('');
+    const [imageUrl, setImageUrl] = useState<string>('');
     const [generating, setGenerating] = useState<boolean>(false);
     const [regeneratingImage, setRegeneratingImage] = useState<boolean>(false);
     const [generatingVideo, setGeneratingVideo] = useState<boolean>(false);
+
+    // Paginación
+    const [winnersPage, setWinnersPage] = useState(1);
+    const [potentialsPage, setPotentialsPage] = useState(1);
+    const [allPage, setAllPage] = useState(1);
+    const itemsPerPage = 6;
     // Filtrar: mostrar solo anuncios con texto válido (excluye placeholders como "Sin texto disponible")
     const hasAdText = (ad: FacebookAd): boolean => {
         const raw = (ad.ad_text ?? '').toString().trim();
@@ -130,7 +139,6 @@ export default function FacebookAdsShow({ search }: Props) {
     // Dedupe por página dentro de cada categoría sobre la base filtrada
     const winners = uniqueByPage(adsWithText.filter(ad => ad.is_winner));
     const potentials = uniqueByPage(adsWithText.filter(ad => ad.is_potential));
-    const others = uniqueByPage(adsWithText.filter(ad => !ad.is_winner && !ad.is_potential));
     const allUnique = uniqueByPage(adsWithText);
 
     // Contar cuántas veces aparece cada página (para badge de repetición) usando solo los visibles
@@ -273,13 +281,73 @@ export default function FacebookAdsShow({ search }: Props) {
                             </Button>
                         </a>
                     )}
-                    <Button variant="default" size="sm" onClick={() => { setCloneAd(ad); setGenerated(''); setGeneratedImage(''); setGeneratedVideo(''); setPrice(''); setCountry(ad.country_code || 'CO'); setCloneOpen(true); }}>
+                    <Button variant="default" size="sm" onClick={() => { setCloneAd(ad); setGenerated(''); setGeneratedImage(''); setImageUrl(ad.ad_image_url || ''); setGeneratedVideo(''); setPrice(''); setCountry(ad.country_code || 'CO'); setCloneOpen(true); }}>
                         <CopyPlus className="w-4 h-4 mr-2" />
                         Clonar
                     </Button>
                 </div>
             </CardContent>
         </Card>
+        );
+    };
+
+    // Helper para renderizar una lista con paginación
+    const renderPaginatedList = (ads: FacebookAd[], currentPage: number, setPage: (page: number) => void) => {
+        const totalPages = Math.ceil(ads.length / itemsPerPage);
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const currentAds = ads.slice(startIndex, endIndex);
+
+        return (
+            <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {currentAds.map(renderAdCard)}
+                </div>
+
+                {totalPages > 1 && (
+                    <>
+                        <div className="mt-8 flex items-center justify-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPage(Math.max(1, currentPage - 1))}
+                                disabled={currentPage === 1}
+                            >
+                                <ChevronLeft className="w-4 h-4 mr-1" />
+                                Anterior
+                            </Button>
+
+                            <div className="flex items-center gap-1">
+                                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                                    <Button
+                                        key={page}
+                                        variant={currentPage === page ? 'default' : 'outline'}
+                                        size="sm"
+                                        onClick={() => setPage(page)}
+                                        className="w-10"
+                                    >
+                                        {page}
+                                    </Button>
+                                ))}
+                            </div>
+
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+                                disabled={currentPage === totalPages}
+                            >
+                                Siguiente
+                                <ChevronRight className="w-4 h-4 ml-1" />
+                            </Button>
+                        </div>
+
+                        <div className="mt-4 text-center text-sm text-muted-foreground">
+                            Mostrando {startIndex + 1}-{Math.min(endIndex, ads.length)} de {ads.length} anuncios
+                        </div>
+                    </>
+                )}
+            </>
         );
     };
 
@@ -372,9 +440,7 @@ export default function FacebookAdsShow({ search }: Props) {
                                 </CardContent>
                             </Card>
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {winners.map(renderAdCard)}
-                            </div>
+                            renderPaginatedList(winners, winnersPage, setWinnersPage)
                         )}
                     </TabsContent>
 
@@ -386,16 +452,12 @@ export default function FacebookAdsShow({ search }: Props) {
                                 </CardContent>
                             </Card>
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {potentials.map(renderAdCard)}
-                            </div>
+                            renderPaginatedList(potentials, potentialsPage, setPotentialsPage)
                         )}
                     </TabsContent>
 
                     <TabsContent value="all" className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {allUnique.map(renderAdCard)}
-                        </div>
+                        {renderPaginatedList(allUnique, allPage, setAllPage)}
                     </TabsContent>
                 </Tabs>
             </div>
@@ -434,10 +496,12 @@ export default function FacebookAdsShow({ search }: Props) {
                                 if (!cloneAd) return; setGenerating(true);
                                 try {
                                     // Obtener token CSRF fresco cada vez
-                                    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content;
+                                    const csrfMeta = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement;
+                                    const csrfToken = csrfMeta?.content;
 
                                     if (!csrfToken) {
-                                        alert('Sesión expirada. Por favor recarga la página.');
+                                        alert('Sesión expirada. Por favor recarga la página (F5).');
+                                        setGenerating(false);
                                         return;
                                     }
 
@@ -448,6 +512,7 @@ export default function FacebookAdsShow({ search }: Props) {
                                             'Content-Type': 'application/json',
                                             'X-Requested-With': 'XMLHttpRequest',
                                             'X-CSRF-TOKEN': csrfToken,
+                                            'Accept': 'application/json',
                                         },
                                         body: JSON.stringify({
                                             page_name: cloneAd.page_name,
@@ -456,6 +521,14 @@ export default function FacebookAdsShow({ search }: Props) {
                                             price: parseFloat(price || '0'),
                                         }),
                                     });
+
+                                    // Si es error 419, mostrar mensaje específico
+                                    if (res.status === 419) {
+                                        alert('Tu sesión ha expirado. Por favor recarga la página (presiona F5) e intenta de nuevo.');
+                                        setGenerating(false);
+                                        return;
+                                    }
+
                                     const data = await res.json();
                                     if (!res.ok) {
                                         const errorMessage = data?.message || 'Error generando copy';
@@ -464,6 +537,8 @@ export default function FacebookAdsShow({ search }: Props) {
                                     }
                                     setGenerated(data.generated || '');
                                     setGeneratedImage(data.image || '');
+                                    setClonedAdUuid(data.cloned_ad_uuid || '');
+                                    setImageUrl(data.image_url || '');
                                     if (data.warning) {
                                         alert(data.warning);
                                     }
@@ -481,18 +556,25 @@ export default function FacebookAdsShow({ search }: Props) {
                             <div className="space-y-4">
                                 <div>
                                     <Label>Copy generado</Label>
-                                    <textarea className="w-full rounded-md border bg-background p-3 text-sm" rows={8} value={generated} readOnly />
+                                    <textarea
+                                        className="w-full rounded-md border bg-background p-3 text-sm"
+                                        rows={8}
+                                        value={generated}
+                                        onChange={(e) => setGenerated(e.target.value)}
+                                        placeholder="Edita tu copy aquí antes de regenerar imagen o video"
+                                    />
                                 </div>
-                                {generatedImage && (
+                                {(generatedImage || imageUrl) && (
                                     <div>
-                                        <Label>Imagen generada</Label>
+                                        <Label>{generatedImage ? 'Imagen generada' : 'Imagen original'}</Label>
                                         <div className="mt-2 border rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
-                                            <img
-                                                src={generatedImage}
-                                                alt="Imagen generada"
-                                                className="w-full max-w-md mx-auto rounded-lg shadow-lg"
+                                            <ImageEditor
+                                                imageUrl={generatedImage || imageUrl}
+                                                onSave={(editedImage) => {
+                                                    setGeneratedImage(editedImage);
+                                                }}
                                             />
-                                            <div className="mt-3 flex justify-center gap-2">
+                                            <div className="mt-3 flex justify-center gap-2 flex-wrap">
                                                 <Button
                                                     size="sm"
                                                     variant="outline"
@@ -508,14 +590,16 @@ export default function FacebookAdsShow({ search }: Props) {
                                                                 },
                                                                 body: JSON.stringify({
                                                                     page_name: cloneAd.page_name,
-                                                                    ad_text: cloneAd.ad_text,
+                                                                    ad_text: generated || cloneAd.ad_text,
                                                                     country,
                                                                     price: parseFloat(price || '0'),
+                                                                    cloned_ad_uuid: clonedAdUuid,
                                                                 }),
                                                             });
                                                             const data = await res.json();
                                                             if (!res.ok) throw new Error(data?.message || 'Error regenerando imagen');
                                                             setGeneratedImage(data.image || '');
+                                                            if (data.image_url) setImageUrl(data.image_url);
                                                         } catch (e) {
                                                             console.error(e);
                                                             alert('No se pudo regenerar la imagen');
@@ -541,6 +625,76 @@ export default function FacebookAdsShow({ search }: Props) {
                                                     <Download className="w-4 h-4 mr-2" />
                                                     Descargar
                                                 </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="default"
+                                                onClick={async () => {
+                                                    if (!clonedAdUuid) {
+                                                        alert('Debes generar el copy primero.');
+                                                        return;
+                                                    }
+                                                    try {
+                                                        // Guardar copy
+                                                        await fetch(`/cloned-ads/${clonedAdUuid}`, {
+                                                            method: 'PUT',
+                                                            headers: {
+                                                                'Content-Type': 'application/json',
+                                                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                                                            },
+                                                            body: JSON.stringify({
+                                                                generated_copy: generated,
+                                                                page_name: cloneAd?.page_name,
+                                                                price: parseFloat(price || '0'),
+                                                            }),
+                                                        });
+
+                                                        // Guardar imagen si existe
+                                                        if (generatedImage) {
+                                                            await fetch(`/cloned-ads/${clonedAdUuid}/update-image`, {
+                                                                method: 'POST',
+                                                                headers: {
+                                                                    'Content-Type': 'application/json',
+                                                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                                                                },
+                                                                body: JSON.stringify({ image: generatedImage }),
+                                                            });
+                                                        }
+
+                                                        // Guardar video si existe
+                                                        if (generatedVideo) {
+                                                            await fetch(`/cloned-ads/${clonedAdUuid}/update-video`, {
+                                                                method: 'POST',
+                                                                headers: {
+                                                                    'Content-Type': 'application/json',
+                                                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                                                                },
+                                                                body: JSON.stringify({ video: generatedVideo }),
+                                                            });
+                                                        }
+
+                                                        alert('Anuncio guardado correctamente');
+                                                    } catch (e) {
+                                                        console.error(e);
+                                                        alert('No se pudo guardar el anuncio');
+                                                    }
+                                                }}
+                                            >
+                                                Guardar
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="secondary"
+                                                onClick={async () => {
+                                                    if (!clonedAdUuid) {
+                                                        alert('Primero guarda el anuncio.');
+                                                        return;
+                                                    }
+                                                    // Placeholder: integración con Facebook Marketing API
+                                                    alert('Programación pendiente: conectaremos con Facebook Ads API para publicar a fecha/hora.');
+                                                }}
+                                            >
+                                                Programar anuncio
+                                            </Button>
                                                 <Button
                                                     size="sm"
                                                     variant="default"
@@ -556,7 +710,10 @@ export default function FacebookAdsShow({ search }: Props) {
                                                                 },
                                                                 body: JSON.stringify({
                                                                     image: generatedImage,
-                                                                    prompt: `Create a dynamic video ad for ${cloneAd.page_name}. Add subtle movement, zoom effects, and engaging animations that highlight the product/service.`,
+                                                                    page_name: cloneAd.page_name || 'Tu Negocio',
+                                                                    text1: cloneAd.page_name || 'Tu Negocio Aquí',
+                                                                    text2: `Descubre Más
+[size 150%]¡Aprovecha![/size]`,
                                                                 }),
                                                             });
                                                             const data = await res.json();
